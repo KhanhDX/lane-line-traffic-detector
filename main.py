@@ -31,7 +31,7 @@ def clean_images():
 ### Preprocess image
 def constrastLimit(image):
     img_hist_equalized = cv2.cvtColor(image, cv2.COLOR_BGR2YCrCb)
-    channels = cv2.split(img_hist_equalized)
+    channels = list(cv2.split(img_hist_equalized))
     channels[0] = cv2.equalizeHist(channels[0])
     img_hist_equalized = cv2.merge(channels)
     img_hist_equalized = cv2.cvtColor(img_hist_equalized, cv2.COLOR_YCrCb2BGR)
@@ -46,7 +46,6 @@ def LaplacianOfGaussian(image):
     
 def binarization(image):
     thresh = cv2.threshold(image,32,255,cv2.THRESH_BINARY)[1]
-    #thresh = cv2.adaptiveThreshold(image,255,cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY,11,2)
     return thresh
 
 def preprocess_image(image):
@@ -70,7 +69,7 @@ def removeSmallComponents(image, threshold):
 
 def findContour(image):
     #find contours in the thresholded image
-    cnts = cv2.findContours(image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE    )
+    cnts,_ = cv2.findContours(image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE    )
     cnts = cnts[0] if imutils.is_cv2() else cnts[1]
     return cnts
 
@@ -91,17 +90,6 @@ def contourIsSign(perimeter, centroid, threshold):
         return True, max_value + 2
     else:                 # is not the sign
         return False, max_value + 2
-
-#crop sign 
-def cropContour(image, center, max_distance):
-    width = image.shape[1]
-    height = image.shape[0]
-    top = max([int(center[0] - max_distance), 0])
-    bottom = min([int(center[0] + max_distance + 1), height-1])
-    left = max([int(center[1] - max_distance), 0])
-    right = min([int(center[1] + max_distance+1), width-1])
-    print(left, right, top, bottom)
-    return image[left:right, top:bottom]
 
 def cropSign(image, coordinate):
     width = image.shape[1]
@@ -134,27 +122,6 @@ def findLargestSign(image, contours, threshold, distance_theshold):
             sign = cropSign(image,coordinate)
     return sign, coordinate
 
-
-def findSigns(image, contours, threshold, distance_theshold):
-    signs = []
-    coordinates = []
-    for c in contours:
-        # compute the center of the contour
-        M = cv2.moments(c)
-        if M["m00"] == 0:
-            continue
-        cX = int(M["m10"] / M["m00"])
-        cY = int(M["m01"] / M["m00"])
-        is_sign, max_distance = contourIsSign(c, [cX, cY], 1-threshold)
-        if is_sign and max_distance > distance_theshold:
-            sign = cropContour(image, [cX, cY], max_distance)
-            signs.append(sign)
-            coordinate = np.reshape(c, [-1,2])
-            top, left = np.amin(coordinate, axis=0)
-            right, bottom = np.amax(coordinate, axis = 0)
-            coordinates.append([(top-2,left-2),(right+1,bottom+1)])
-    return signs, coordinates
-
 def localization(image, min_size_components, similitary_contour_with_circle, model, count, current_sign_type):
     original_image = image.copy()
     binary_image = preprocess_image(image)
@@ -163,11 +130,8 @@ def localization(image, min_size_components, similitary_contour_with_circle, mod
 
     binary_image = cv2.bitwise_and(binary_image,binary_image, mask=remove_other_color(image))
 
-    #binary_image = remove_line(binary_image)
-
     cv2.imshow('BINARY IMAGE', binary_image)
     contours = findContour(binary_image)
-    #signs, coordinates = findSigns(image, contours, similitary_contour_with_circle, 15)
     sign, coordinate = findLargestSign(original_image, contours, similitary_contour_with_circle, 15)
     
     text = ""
@@ -186,37 +150,25 @@ def localization(image, min_size_components, similitary_contour_with_circle, mod
         cv2.putText(original_image,text,(coordinate[0][0], coordinate[0][1] -15), font, 1,(0,0,255),2,cv2.LINE_4)
     return coordinate, original_image, sign_type, text
 
-def remove_line(img):
-    gray = img.copy()
-    edges = cv2.Canny(gray,50,150,apertureSize = 3)
-    minLineLength = 5
-    maxLineGap = 3
-    lines = cv2.HoughLinesP(edges,1,np.pi/180,15,minLineLength,maxLineGap)
-    mask = np.ones(img.shape[:2], dtype="uint8") * 255
-    if lines is not None:
-        for line in lines:
-            for x1,y1,x2,y2 in line:
-                cv2.line(mask,(x1,y1),(x2,y2),(0,0,0),2)
-    return cv2.bitwise_and(img, img, mask=mask)
-
 def remove_other_color(img):
     frame = cv2.GaussianBlur(img, (3,3), 0) 
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
     # define range of blue color in HSV
     lower_blue = np.array([100,128,0])
-    upper_blue = np.array([215,255,255])
+    upper_blue = np.array([180,255,255])
     # Threshold the HSV image to get only blue colors
     mask_blue = cv2.inRange(hsv, lower_blue, upper_blue)
-
+    cv2.imshow('mask_blue',mask_blue)
     lower_white = np.array([0,0,128], dtype=np.uint8)
-    upper_white = np.array([255,255,255], dtype=np.uint8)
+    upper_white = np.array([180,255,255], dtype=np.uint8)
     # Threshold the HSV image to get only blue colors
     mask_white = cv2.inRange(hsv, lower_white, upper_white)
-
+    cv2.imshow('mask_white',mask_white)
     lower_black = np.array([0,0,0], dtype=np.uint8)
     upper_black = np.array([170,150,50], dtype=np.uint8)
 
     mask_black = cv2.inRange(hsv, lower_black, upper_black)
+    cv2.imshow('mask_black',mask_black)
 
     mask_1 = cv2.bitwise_or(mask_blue, mask_white)
     mask = cv2.bitwise_or(mask_1, mask_black)
@@ -262,13 +214,10 @@ def main(args):
         if not success:
             print("FINISHED")
             break
-        width = frame.shape[1]
-        height = frame.shape[0]
-        #frame = cv2.resize(frame, (640,int(height/(width/640))))
         frame = cv2.resize(frame, (640,480))
 
         print("Frame:{}".format(count))
-        #image = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+        #Traffic Sign Detection
         coordinate, image, sign_type, text = localization(frame, args.min_size_components, args.similitary_contour_with_circle, model, count, current_sign)
         if coordinate is not None:
             cv2.rectangle(image, coordinate[0],coordinate[1], (255, 255, 255), 1)
@@ -292,7 +241,7 @@ def main(args):
             current_size = math.sqrt(math.pow((tl[0]-br[0]),2) + math.pow((tl[1]-br[1]),2))
             # grab the ROI for the bounding box and convert it
             # to the HSV color space
-            roi = frame[tl[1]:br[1], tl[0]:br[0]]
+            roi = frame[tl[1]:br[1], tl[1]:br[1]]
             roi = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
             #roi = cv2.cvtColor(roi, cv2.COLOR_BGR2LAB)
 
